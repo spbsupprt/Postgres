@@ -30,3 +30,9 @@
 - заметки, если считаете, что имеет смысл их зафиксировать в репозитории.
 
   ---
+
+Дано:
+
+![image](https://github.com/user-attachments/assets/3f53152c-416d-48c3-babe-cdd17f5c7f73)
+
+Выполним плейбук: https://github.com/spbsupprt/Postgres/blob/main/postgres.yml
