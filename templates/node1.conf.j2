@@ -1,0 +1,8 @@
+[node1]
+description = "PostgreSQL Master"
+ssh_command = ssh postgres@{{ master_ip }}
+conninfo = host={{ master_ip }} user=barman dbname=postgres
+backup_method = postgres
+streaming_archiver = on
+slot_name = node1
+create_slot = auto
