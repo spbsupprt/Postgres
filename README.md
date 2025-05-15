@@ -153,7 +153,7 @@ psql -c "SELECT slot_name, active, restart_lsn FROM pg_replication_slots;"
 
 ```
 # На мастере:
-ls -lh {{ pg_wal_dir }}
+ls -lh /var/lib/postgresql/wal_archive
 
 # Результат:
 total 1.2G
