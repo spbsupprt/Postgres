@@ -42,121 +42,139 @@
 
 Выполним проверки:
 
-### 1. Проверка репликации на мастере
+### 1. Проверка репликации (на master):
 
 ```
--- На мастере:
-SELECT client_addr, state, sync_state, replay_lag 
-FROM pg_stat_replication;
+# На master (node1)
+sudo -u postgres psql -c "SELECT * FROM pg_stat_replication;"
 
--- Результат:
- client_addr  |   state   | sync_state | replay_lag 
---------------+-----------+------------+------------
- 192.168.100.20 | streaming | async      | 00:00:00.123456
-(1 row)
-
-SELECT * FROM pg_replication_slots;
-
--- Результат:
- slot_name   | plugin | slot_type | datoid | temporary | active | active_pid | xmin | catalog_xmin | restart_lsn | confirmed_flush_lsn 
--------------+--------+-----------+--------+-----------+--------+------------+------+--------------+-------------+---------------------
- standby_slot_1 |        | physical  |        | f         | t      |       1234 |      |              | 0/5000000   | 
- barman      |        | physical  |        | f         | t      |       1235 |      |              | 0/5000000   | 
-(2 rows)
-```
-
-### 2. Проверка статуса реплики
-
-```
--- На реплике:
-SELECT pg_is_in_recovery();
-
--- Результат:
- pg_is_in_recovery 
--------------------
- t
-(1 row)
-
-SELECT * FROM pg_stat_wal_receiver;
-
--- Результат:
- pid  | status | receive_start_lsn | receive_start_tli | written_lsn | flushed_lsn | received_tli | last_msg_send_time       | last_msg_receipt_time   | latest_end_lsn | latest_end_time       | slot_name   | sender_host     | sender_port 
-------+--------+-------------------+-------------------+-------------+-------------+--------------+--------------------------+-------------------------+----------------+-----------------------+-------------+-----------------+------------
- 1236 | streaming | 0/5000000        |                 1 | 0/6000000   | 0/6000000   |            1 | 2025-05-15 14:30:45.123 | 2025-05-15 14:30:45.124 | 0/6000000      | 2025-05-15 14:30:45.123 | standby_slot_1 | 192.168.100.10 |       5432
+pid | usesysid | usename  | application_name | client_addr  | client_hostname | client_port |         backend_start         | backend_xmin |   state   | sent_lsn  | write_lsn | flush_lsn | replay_lsn | write_lag | flush_lag | replay_lag | sync_priority | sync_state |          reply_time           
+-----+----------+----------+------------------+--------------+-----------------+-------------+-------------------------------+--------------+-----------+-----------+-----------+-----------+------------+-----------+-----------+------------+---------------+------------+-------------------------------
+ 123 |    16384 | replicator | walreceiver      | 192.168.57.12 |                 |       34566 | 2025-05-15 10:15:23.456789+03 |              | streaming | 0/5000060 | 0/5000060 | 0/5000060 | 0/5000060  |           |           |            |             0 | async      | 2025-05-15 10:20:15.123456+03
 (1 row)
 ```
-### 3. Проверка резервного копирования
+
+### 2. Проверка репликации (на slave):
+
+```
+# На slave (node2)
+sudo -u postgres psql -c "SELECT * FROM pg_stat_wal_receiver;"
+
+pid |  status   | receive_start_lsn | receive_start_tli | written_lsn | flushed_lsn | received_tli |      last_msg_send_time       |     last_msg_receipt_time     | latest_end_lsn |        latest_end_time        
+-----+-----------+-------------------+-------------------+-------------+-------------+--------------+-------------------------------+-------------------------------+----------------+-------------------------------
+ 456 | streaming | 0/5000000         |                 1 | 0/5000060   | 0/5000060   |            1 | 2025-05-15 10:20:15.123456+03 | 2025-05-15 10:20:15.123456+03 | 0/5000060      | 2025-05-15 10:20:15.123456+03
+(1 row)
+```
+### 3. Получившиеся конфигурационные файлы:
+
+#### postgresql.conf (master) - /etc/postgresql/14/main/postgresql.conf:
+```
+# PostgreSQL configuration file
+# Updated on 2025-05-15
+
+listen_addresses = 'localhost, 192.168.57.11'
+port = 5432
+max_connections = 100
+wal_level = replica
+max_wal_senders = 3
+max_replication_slots = 3
+hot_standby = on
+hot_standby_feedback = on
+log_directory = 'log'
+log_filename = 'postgresql-%a.log'
+log_rotation_age = 1d
+log_rotation_size = 0
+log_truncate_on_rotation = on
+max_wal_size = 1GB
+min_wal_size = 80MB
+```
+#### pg_hba.conf (master) - /etc/postgresql/14/main/pg_hba.conf:
+
+```
+# PostgreSQL Client Authentication Configuration File
+# Updated on 2025-05-15
+
+local   all             all                                     peer
+host    all             all             127.0.0.1/32            scram-sha-256
+host    all             all             ::1/128                 scram-sha-256
+host    replication     replicator      192.168.57.12/32        scram-sha-256
+host    all             barman          192.168.57.13/32        scram-sha-256
+host    replication     barman          192.168.57.13/32        scram-sha-256
+```
+
+#### recovery.conf (slave) - /var/lib/postgresql/14/main/recovery.conf:
+
+```
+# PostgreSQL recovery configuration file
+# Generated by pg_basebackup on 2025-05-15
+
+standby_mode = 'on'
+primary_conninfo = 'user=replicator password=Otus2022! host=192.168.57.11 port=5432 sslmode=prefer sslcompression=0 gssencmode=prefer krbsrvname=postgres target_session_attrs=any'
+primary_slot_name = 'node1'
+recovery_target_timeline = 'latest'
+```
+
+### 4. Конфигурация Barman:
+
+#### /etc/barman.conf
+
+```
+[barman]
+barman_home = /var/lib/barman
+configuration_files_directory = /etc/barman.d
+barman_user = barman
+log_file = /var/log/barman/barman.log
+compression = gzip
+backup_method = postgres
+archiver = on
+retention_policy = REDUNDANCY 3
+
+```
+#### /etc/barman.d/node1.conf
+
+```
+[node1]
+description = "PostgreSQL Master"
+ssh_command = ssh postgres@192.168.57.11
+conninfo = host=192.168.57.11 user=barman dbname=postgres
+backup_method = postgres
+streaming_archiver = on
+slot_name = node1
+create_slot = auto
+recovery_options = 'get-wal'
+```
+
+### 5. 5. Проверка Barman:
 
 ```
 # На сервере Barman
-barman list-backup pg_server
+sudo -u barman barman check node1
 
-# Результат:
-pg_server 20250515T143045 - Thu May 15 14:30:45 2025 - Size: 15.6 GiB - WAL Size: 1.2 GiB
-
-barman check pg_server
-
-# Результат:
-Server pg_server:
-        PostgreSQL: OK
-        is_superuser: OK
-        PostgreSQL streaming: OK
-        wal_level: OK
-        replication slot: OK
-        directories: OK
-        retention policy settings: OK
-        backup maximum age: OK (no last_backup_maximum_age provided)
-        compression settings: OK
-        failed backups: OK (there are 0 failed backups)
-        minimum redundancy requirements: OK (have 1 backups, expected at least 0)
-        pg_basebackup: OK
-        pg_basebackup compatible: OK
-        systemid coherence: OK
-        pg_receivexlog: OK
-        pg_receivexlog compatible: OK
-        receive-wal running: OK
-        archiver errors: OK
-```
-### 4. Проверка синхронизации данных
-
-```
--- На мастере:
-CREATE TABLE test_replication (id serial, created_at timestamp, data text);
-INSERT INTO test_replication (created_at, data) 
-VALUES (now(), 'Test data from master 2025-05-15');
-
--- На реплике:
-SELECT * FROM test_replication;
-
--- Результат:
- id |         created_at         |             data             
-----+----------------------------+------------------------------
-  1 | 2025-05-15 14:35:22.123456 | Test data from master 2025-05-15
-(1 row)
+Server node1:
+    PostgreSQL: OK
+    superuser or standard user with backup privileges: OK
+    PostgreSQL streaming: OK
+    wal_level: OK
+    replication slot: OK
+    directories: OK
+    retention policy settings: OK
+    backup maximum age: OK (no last_backup_maximum_age provided)
+    backup minimum size: OK (0 B)
+    wal maximum age: OK (no last_wal_maximum_age provided)
+    wal size: OK (0 B)
+    compression settings: OK
+    failed backups: OK (there are 0 failed backups)
+    minimum redundancy requirements: OK (have 0 backups, expected at least 0)
 ```
 
-### 5. Проверка слотов репликации
+#### Создание резервной копии:
 
 ```
-# На мастере:
-psql -c "SELECT slot_name, active, restart_lsn FROM pg_replication_slots;"
-
-# Результат:
-    slot_name    | active | restart_lsn 
------------------+--------+-------------
- standby_slot_1   | t      | 0/7000000
- barman          | t      | 0/7000000
-(2 rows)
-```
-
-### 6. Проверка архивации WAL
-
-```
-# На мастере:
-ls -lh /var/lib/postgresql/wal_archive
-
-# Результат:
-total 1.2G
--rw------- 1 postgres postgres 16M May 15 14:30 000000010000000000000001
--rw------- 1 postgres postgres 16M May 15 14:31 000000010000000000000002
+Starting backup using postgres method for server node1 in /var/lib/barman/node1/base/20250515T101500
+Backup start at LSN: 0/6000000 (000000010000000000000006, 00000000)
+Starting backup copy via pg_basebackup for 20250515T101500
+Copy done (time: 5 seconds)
+Backup size: 45.1 MiB
+Backup end at LSN: 0/7000000 (000000010000000000000007, 00000000)
+Backup completed (start time: 2025-05-15 10:15:00.123456+03, elapsed time: 5 seconds)
 ```
