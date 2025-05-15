@@ -144,7 +144,7 @@ create_slot = auto
 recovery_options = 'get-wal'
 ```
 
-### 5. 5. Проверка Barman:
+### 5. Проверка Barman:
 
 ```
 # На сервере Barman
